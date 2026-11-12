@@ -11,6 +11,7 @@ import (
 
 // View builds the window.
 func (a *App) View(c *ui.Context) {
+	defer a.beginUIView(c)()
 	a.mu.Lock()
 	a.svc, a.live = c.Services(), true
 	a.mu.Unlock()
@@ -21,6 +22,7 @@ func (a *App) View(c *ui.Context) {
 	}
 	a.drain()
 	a.applyZoom(c, true)
+	a.observeUI(c)
 	for _, t := range a.toasts {
 		c.AddToast(t(locales.In(c.Locale())))
 	}
@@ -46,12 +48,13 @@ func (a *App) View(c *ui.Context) {
 	tok := theme.For(a.settings.Theme, base.Dark)
 	c.SetTheme(tok.Apply(base))
 	m := locales.In(c.Locale())
-	a.localName = m.LocalTerminal()
+	a.localName, a.localFilesName = m.LocalTerminal(), m.LocalFiles()
 	a.nameTools(m)
 	a.bc.synced = a.syncSet()
 	a.fontToasts(c, m)
 
 	a.shortcuts(c)
+	a.syncTransferQueue(c)
 	// The window: one title bar across the top, on the window's material
 	// (or its solid fill) as the sidebar under it, which holds the hosts,
 	// or the settings' pages while they show, beside the canvas of the
@@ -116,6 +119,7 @@ func (a *App) View(c *ui.Context) {
 					a.railView(c, m, tok)
 				})
 				if a.page == pageWorkspace {
+					a.transferQueueView(c, m, tok)
 					a.statusBar(c, m, tok)
 				}
 			})
@@ -128,6 +132,7 @@ func (a *App) View(c *ui.Context) {
 		ui.Split(c.Key("frame"), &a.sbWidth, sidebar, content).Grow(1).Shrink(1).MinHeight(0).FillWidth()
 		a.saveSidebarWidth(c)
 	})
+	a.fileSheetsView(c, tok, m)
 	a.editorView(c, m)
 	a.groupView(c, m)
 	a.multiSelectView(c, m)

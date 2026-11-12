@@ -192,8 +192,9 @@ func TestTerminalAssistantHosts(t *testing.T) {
 	if aiTarget(c.host) != agent.TargetShell || aiEngine(c) != nil {
 		t.Fatalf("local target %v", aiTarget(c.host))
 	}
-	if _, err := a.OpenFiles(localID, openAt{}, nil); !errors.Is(err, errLocalTerminalOnly) {
-		t.Fatalf("files on this computer: %v", err)
+	files, err := a.OpenFiles(localID, openAt{}, nil)
+	if err != nil || a.conns[files].s != nil {
+		t.Fatalf("local files without a session: %v", err)
 	}
 
 	sr, err := a.store.Add(assets.Host{Protocol: assets.ProtoSerial, Serial: &assets.SerialLine{Device: "/dev/sshyard-test-missing"}})

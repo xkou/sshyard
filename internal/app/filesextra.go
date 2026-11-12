@@ -174,7 +174,7 @@ func (a *App) compressView(c *ui.Context, cn *conn, tok theme.Tokens, m locales.
 	if ask == nil {
 		return
 	}
-	sheet(ui.Modal(c.Key("compress"), &fs.compressOpen, func() {
+	sheet(a.fileModal(c, cn, "compress", &fs.compressOpen, func() {
 		ui.Column(c).Gap(14).Width(380).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				softTile(c, icons.Compress, tok.Accent, 30)
@@ -391,7 +391,7 @@ func (a *App) infoView(c *ui.Context, cn *conn, tok theme.Tokens, m locales.Mess
 	if one {
 		title = shownName(es[0].Name)
 	}
-	sheet(ui.Modal(c.Key("info"), &fs.infoOpen, func() {
+	sheet(a.fileModal(c, cn, "info", &fs.infoOpen, func() {
 		ui.Column(c).Gap(14).Width(400).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				if one {
@@ -609,7 +609,7 @@ func (a *App) previewView(c *ui.Context, cn *conn, tok theme.Tokens, m locales.M
 	w := min(max(ww-160, 320), 1100)
 	h := min(max(wh-240, 200), 760)
 	many := len(p.images) > 1
-	panel := sheet(ui.Modal(c.Key("preview"), &fs.previewOpen, func() {
+	panel := sheet(a.fileModal(c, cn, "preview", &fs.previewOpen, func() {
 		ui.Column(c).Gap(12).Width(w).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth().Children(func() {
 				softTile(c, icons.Image, tok.Accent, 26)

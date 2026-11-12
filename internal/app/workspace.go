@@ -433,6 +433,9 @@ func (a *App) paneView(c *ui.Context, t *layout.Tab, n *layout.Node, tok theme.T
 				switch cn.kind {
 				case layout.Files:
 					title = m.FilesPane(a.pv(cn.host.Label()))
+					if isLocal(cn.host.ID) {
+						title = m.LocalFiles()
+					}
 				}
 				leadMin := paneHeadIcon + 8 + titleRoom(c, title)
 				if cn.s != nil {
@@ -530,10 +533,12 @@ func (a *App) paneActions(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn
 			barAction{Key: "files", Button: IconButton{Icon: icons.Folder, Label: m.OpenFilesHere(), Size: Tiny, Disabled: !remoteOnly(cn)},
 				Do: on(func() { a.OpenFiles(cn.host.ID, openAt{pane: n.ID, edge: a.filesEdge()}, cn) })})
 	} else {
-		acts = append(acts,
-			barAction{Key: "dual", Button: IconButton{Icon: icons.LocalDisk, On: icons.LocalDiskOn, Label: m.ShowLocalFiles(), Toggle: true, Active: a.settings.FilesDual, Size: Tiny},
-				Do: on(a.toggleDual)},
-			a.transfersAction(c, cn, m))
+		if !isLocal(cn.host.ID) {
+			acts = append(acts,
+				barAction{Key: "dual", Button: IconButton{Icon: icons.LocalDisk, On: icons.LocalDiskOn, Label: m.ShowLocalFiles(), Toggle: true, Active: a.settings.FilesDual, Size: Tiny},
+					Do: on(a.toggleDual)},
+				a.transfersAction(c, cn, m))
+		}
 		if f, ok := a.followAction(t, n, cn, m); ok {
 			acts = append(acts, f)
 		}

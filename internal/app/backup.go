@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/url"
 	"os"
@@ -172,6 +173,17 @@ func (a *App) collectBackup(secrets bool) (backupPayload, error) {
 	p := backupPayload{Assets: a.store.Snapshot(), Settings: a.settings}
 	p.Settings.BackupTargets, p.Settings.DefaultBackupPassword = nil, false
 	p.Settings.Background = settings.DefaultBackground()
+	// Remote favorites travel with their saved hosts; paths on this
+	// computer and temporary hosts stay on this device.
+	p.Settings.FileFavorites = nil
+	for _, h := range p.Assets.Hosts {
+		if paths := a.settings.FileFavorites[h.ID]; len(paths) > 0 {
+			if p.Settings.FileFavorites == nil {
+				p.Settings.FileFavorites = map[string][]string{}
+			}
+			p.Settings.FileFavorites[h.ID] = slices.Clone(paths)
+		}
+	}
 	// What starts a program on this computer is not taken by a restore,
 	// so it is not put in a backup either.
 	p.Settings.AIACPAgents, p.Settings.AIACP, p.Settings.AIDefaultAgent = nil, nil, ""
@@ -387,11 +399,30 @@ func mergeSettings(cur, in settings.Settings) settings.Settings {
 	out := in
 	out.Background = cur.Background
 	out.RememberLayout = cur.RememberLayout
+	out.HideSystemTitleBar = cur.HideSystemTitleBar
 	out.SidebarWidth, out.SidebarHidden = cur.SidebarWidth, cur.SidebarHidden
 	out.ChromeMaterial, out.ContentMaterial = cur.ChromeMaterial, cur.ContentMaterial
 	out.TrayClick, out.TrayMaterial, out.TrayHeight = cur.TrayClick, cur.TrayMaterial, cur.TrayHeight
 	out.UIFont, out.TerminalFont = cur.UIFont, cur.TerminalFont
 	out.FilesDual, out.FilesSplit = cur.FilesDual, cur.FilesSplit
+	out.FileFavorites = maps.Clone(cur.FileFavorites)
+	for id, paths := range in.FileFavorites {
+		if isLocal(id) || isTemp(id) {
+			continue
+		}
+		merged := slices.Clone(out.FileFavorites[id])
+		for _, p := range paths {
+			if p != "" && !strings.ContainsRune(p, 0) && !slices.Contains(merged, p) {
+				merged = append(merged, p)
+			}
+		}
+		if len(merged) > 0 {
+			if out.FileFavorites == nil {
+				out.FileFavorites = map[string][]string{}
+			}
+			out.FileFavorites[id] = merged
+		}
+	}
 	out.EditorTreeWidth, out.EditorTreeHidden = cur.EditorTreeWidth, cur.EditorTreeHidden
 	// A backup never turns the MCP endpoint on, nor lets it use the keys
 	// of this computer: that is asked here.

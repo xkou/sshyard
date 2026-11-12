@@ -1475,6 +1475,36 @@ func (msgs Messages) Transfers() string {
 	return Catalog.Format(msgs.locale, "transfers", nil)
 }
 
+// ShowTransferQueue says "Show transfer queue"
+// in the language the app shows.
+func ShowTransferQueue() string { return In(i18n.Locale()).ShowTransferQueue() }
+
+// ShowTransferQueue says "Show transfer queue"
+// in the language of msgs.
+func (msgs Messages) ShowTransferQueue() string {
+	return Catalog.Format(msgs.locale, "showTransferQueue", nil)
+}
+
+// HideTransferQueue says "Hide transfer queue"
+// in the language the app shows.
+func HideTransferQueue() string { return In(i18n.Locale()).HideTransferQueue() }
+
+// HideTransferQueue says "Hide transfer queue"
+// in the language of msgs.
+func (msgs Messages) HideTransferQueue() string {
+	return Catalog.Format(msgs.locale, "hideTransferQueue", nil)
+}
+
+// TransferQueuePending says "{n} remaining"
+// in the language the app shows.
+func TransferQueuePending(n string) string { return In(i18n.Locale()).TransferQueuePending(n) }
+
+// TransferQueuePending says "{n} remaining"
+// in the language of msgs.
+func (msgs Messages) TransferQueuePending(n string) string {
+	return Catalog.Format(msgs.locale, "transferQueuePending", map[string]any{"n": n})
+}
+
 // ClearFinished says "Clear finished"
 // in the language the app shows.
 func ClearFinished() string { return In(i18n.Locale()).ClearFinished() }
@@ -1765,6 +1795,68 @@ func (msgs Messages) RemoteRefresh() string {
 	return Catalog.Format(msgs.locale, "remoteRefresh", nil)
 }
 
+// LocalFileFavorites says "Favorite Local Folders"
+// in the language the app shows.
+func LocalFileFavorites() string { return In(i18n.Locale()).LocalFileFavorites() }
+
+// LocalFileFavorites says "Favorite Local Folders"
+// in the language of msgs.
+func (msgs Messages) LocalFileFavorites() string {
+	return Catalog.Format(msgs.locale, "localFileFavorites", nil)
+}
+
+// RemoteFileFavorites says "Favorite Remote Folders"
+// in the language the app shows.
+func RemoteFileFavorites() string { return In(i18n.Locale()).RemoteFileFavorites() }
+
+// RemoteFileFavorites says "Favorite Remote Folders"
+// in the language of msgs.
+func (msgs Messages) RemoteFileFavorites() string {
+	return Catalog.Format(msgs.locale, "remoteFileFavorites", nil)
+}
+
+// FileFavoritesNote says "Double-click a saved path to open the folder."
+// in the language the app shows.
+func FileFavoritesNote() string { return In(i18n.Locale()).FileFavoritesNote() }
+
+// FileFavoritesNote says "Double-click a saved path to open the folder."
+// in the language of msgs.
+func (msgs Messages) FileFavoritesNote() string {
+	return Catalog.Format(msgs.locale, "fileFavoritesNote", nil)
+}
+
+// FileFavoritesEmpty says "No favorite folders yet."
+// in the language the app shows.
+func FileFavoritesEmpty() string { return In(i18n.Locale()).FileFavoritesEmpty() }
+
+// FileFavoritesEmpty says "No favorite folders yet."
+// in the language of msgs.
+func (msgs Messages) FileFavoritesEmpty() string {
+	return Catalog.Format(msgs.locale, "fileFavoritesEmpty", nil)
+}
+
+// FileFavoriteExists says "This path is already in favorites."
+// in the language the app shows.
+func FileFavoriteExists() string { return In(i18n.Locale()).FileFavoriteExists() }
+
+// FileFavoriteExists says "This path is already in favorites."
+// in the language of msgs.
+func (msgs Messages) FileFavoriteExists() string {
+	return Catalog.Format(msgs.locale, "fileFavoriteExists", nil)
+}
+
+// FileFavoriteOpenFailed says "Could not open “{path}”: {detail}"
+// in the language the app shows.
+func FileFavoriteOpenFailed(path string, detail string) string {
+	return In(i18n.Locale()).FileFavoriteOpenFailed(path, detail)
+}
+
+// FileFavoriteOpenFailed says "Could not open “{path}”: {detail}"
+// in the language of msgs.
+func (msgs Messages) FileFavoriteOpenFailed(path string, detail string) string {
+	return Catalog.Format(msgs.locale, "fileFavoriteOpenFailed", map[string]any{"path": path, "detail": detail})
+}
+
 // LocalNewFolder says "New Local Folder"
 // in the language the app shows.
 func LocalNewFolder() string { return In(i18n.Locale()).LocalNewFolder() }
@@ -1903,6 +1995,26 @@ func Theme() string { return In(i18n.Locale()).Theme() }
 // in the language of msgs.
 func (msgs Messages) Theme() string {
 	return Catalog.Format(msgs.locale, "theme", nil)
+}
+
+// HideSystemTitleBar says "Hide System Title Bar"
+// in the language the app shows.
+func HideSystemTitleBar() string { return In(i18n.Locale()).HideSystemTitleBar() }
+
+// HideSystemTitleBar says "Hide System Title Bar"
+// in the language of msgs.
+func (msgs Messages) HideSystemTitleBar() string {
+	return Catalog.Format(msgs.locale, "hideSystemTitleBar", nil)
+}
+
+// HideSystemTitleBarNote says "Use the app's title bar instead of the system title bar. Takes effect after SSHYard relaunches."
+// in the language the app shows.
+func HideSystemTitleBarNote() string { return In(i18n.Locale()).HideSystemTitleBarNote() }
+
+// HideSystemTitleBarNote says "Use the app's title bar instead of the system title bar. Takes effect after SSHYard relaunches."
+// in the language of msgs.
+func (msgs Messages) HideSystemTitleBarNote() string {
+	return Catalog.Format(msgs.locale, "hideSystemTitleBarNote", nil)
 }
 
 // ClearSearch says "Clear search"
@@ -8265,11 +8377,21 @@ func (msgs Messages) LocalTerminal() string {
 	return Catalog.Format(msgs.locale, "localTerminal", nil)
 }
 
-// LocalTerminalNote says "A shell on this computer. Files, AI, forwards and metrics need a server."
+// LocalFiles says "Local files"
+// in the language the app shows.
+func LocalFiles() string { return In(i18n.Locale()).LocalFiles() }
+
+// LocalFiles says "Local files"
+// in the language of msgs.
+func (msgs Messages) LocalFiles() string {
+	return Catalog.Format(msgs.locale, "localFiles", nil)
+}
+
+// LocalTerminalNote says "A shell on this computer. Forwards and metrics need a server."
 // in the language the app shows.
 func LocalTerminalNote() string { return In(i18n.Locale()).LocalTerminalNote() }
 
-// LocalTerminalNote says "A shell on this computer. Files, AI, forwards and metrics need a server."
+// LocalTerminalNote says "A shell on this computer. Forwards and metrics need a server."
 // in the language of msgs.
 func (msgs Messages) LocalTerminalNote() string {
 	return Catalog.Format(msgs.locale, "localTerminalNote", nil)

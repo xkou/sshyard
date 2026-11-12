@@ -396,6 +396,11 @@ func (a *App) prefAppearance(c *ui.Context, m locales.Messages, tok theme.Tokens
 				s.Theme, *changed = md, true
 			}
 		})
+		g.row(m.HideSystemTitleBar(), m.HideSystemTitleBarNote(), func() {
+			if formCheckbox(c.Key("hidesystemtitlebar"), &s.HideSystemTitleBar, "").Label(m.HideSystemTitleBar()).Changed() {
+				*changed = true
+			}
+		})
 		g.row(m.UiZoom(), m.UiZoomDesc(), func() {
 			opts := []string{m.ZoomSystem()}
 			for _, z := range settings.UIZooms {

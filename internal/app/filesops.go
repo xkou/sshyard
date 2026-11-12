@@ -116,7 +116,7 @@ func (a *App) fileEntries(cn *conn, remote bool, m locales.Messages) []menuEntry
 				label = m.DownloadTo()
 			}
 			out = append(out, menuEntry{Icon: icons.Download, Label: label, Disabled: off, Do: func() { a.downloadTo(cn, paths, m) }})
-		} else {
+		} else if !isLocal(cn.host.ID) {
 			out = append(out, menuEntry{Icon: icons.Upload, Label: m.Upload(), Disabled: off, Do: func() { a.Upload(cn, paths, fs.remote.dir) }})
 		}
 		out = append(out, menuSep)
@@ -240,7 +240,7 @@ func (a *App) askView(c *ui.Context, cn *conn, m locales.Messages) {
 		title, label, button, ic = m.PermissionsTitle(path.Base(ask.path)), m.ModeOctal(), m.Save(), icons.Chmod
 	}
 	tok := currentTokens(c)
-	sheet(ui.Modal(c.Key("ask"), &fs.askOpen, func() {
+	sheet(a.fileModal(c, cn, "ask", &fs.askOpen, func() {
 		ui.Column(c).Gap(14).Width(360).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				softTile(c, ic, tok.Accent, 30)
@@ -283,6 +283,10 @@ func (a *App) deleteView(c *ui.Context, cn *conn, m locales.Messages) {
 	if fs.del == nil {
 		return
 	}
+	if !fs.delOpen {
+		fs.del = nil
+		return
+	}
 	del := fs.del
 	msg := m.DeleteFileConfirm(del.name)
 	switch {
@@ -291,7 +295,7 @@ func (a *App) deleteView(c *ui.Context, cn *conn, m locales.Messages) {
 	case del.isDir:
 		msg = m.DeleteFolderConfirm(del.name)
 	}
-	if ui.AlertDialog(c.Key("del"), &fs.delOpen, m.DeleteItem(), msg, m.Cancel(), m.Delete()) == 1 {
+	if ui.AlertDialog(c.Key(fileDialogKey{cn.id, "delete"}), &fs.delOpen, m.DeleteItem(), msg, m.Cancel(), m.Delete()) == 1 {
 		client := fs.remote.client
 		go func() {
 			var err error
@@ -344,7 +348,7 @@ func (a *App) conflictView(c *ui.Context, cn *conn, m locales.Messages) {
 		ask.at++
 		a.resolveConflicts(cn, ask)
 	}
-	sheet(ui.Modal(c.Key("conflict"), &fs.conflictOpen, func() {
+	sheet(a.fileModal(c, cn, "conflict", &fs.conflictOpen, func() {
 		ui.Column(c).Gap(14).Width(420).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				softTile(c, icons.Warning, tok.Warning, 30)
@@ -489,7 +493,7 @@ func (a *App) transfersSheet(c *ui.Context, cn *conn, tok theme.Tokens, m locale
 	ts := trs.List()
 	n := countTransfers(ts)
 	active, paused, failed := n.active, n.paused, n.failed
-	sheet(ui.Modal(c, &fs.queueOpen, func() {
+	sheet(a.fileModal(c, cn, "transfers", &fs.queueOpen, func() {
 		ui.Column(c.Key("transfers")).Gap(14).Width(720).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).FillWidth().Children(func() {
 				tile(c, icons.Transfers, theme.Brand, 36)

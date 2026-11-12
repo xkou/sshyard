@@ -198,7 +198,7 @@ func (a *App) restoreLayoutNode(n *nodeSnap, mapping map[int]*layout.Node, links
 		mapping[n.ID] = p
 		return p
 	}
-	if n.Kind == "editor" || isTemp(n.Host) || isLocal(n.Host) && !a.layoutShellExists(n.Host) || (n.Kind == "ai" || n.Kind == "files") && seen[n.Kind] {
+	if n.Kind == "editor" || isTemp(n.Host) || isLocal(n.Host) && n.Kind != "files" && !a.layoutShellExists(n.Host) || (n.Kind == "ai" || n.Kind == "files") && seen[n.Kind] {
 		*skipped = true
 		return nil
 	}

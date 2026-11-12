@@ -11,9 +11,8 @@ import (
 	"github.com/Licoy/sshyard/locales"
 )
 
-// localID is the host of local terminal panes: this computer, never
-// saved. Its panes split, move and close as any others, but it has no
-// files, AI, forwards or metrics: there is no SSH connection under them.
+// localID identifies this computer's panes, never saved as a host. Local
+// terminals and files need no SSH connection; forwards and metrics do.
 // A shell's panes are of localID followed by the shell's ID; localID
 // alone is the default shell.
 const localID = "local:"
@@ -45,9 +44,8 @@ func (a *App) shell(id string) session.Shell {
 	return session.Shell{}
 }
 
-// errLocalTerminalOnly is opening anything but a terminal, or an
-// assistant that types into it, on this computer.
-var errLocalTerminalOnly = errors.New("app: this computer opens terminals only")
+// errLocalTerminalOnly rejects pane kinds unavailable on this computer.
+var errLocalTerminalOnly = errors.New("app: this computer opens terminals, files and assistants only")
 
 // localHost is the local host id: named in the app's language, or for
 // its shell when there are several.
@@ -107,6 +105,20 @@ func (a *App) localEntry(m locales.Messages) menuEntry {
 		e.Sub = append(e.Sub, sub)
 	}
 	return e
+}
+
+// OpenLocalFiles opens this computer's file browser in a new tab.
+func (a *App) OpenLocalFiles() (int, error) {
+	return a.OpenFiles(localID, openAt{}, nil)
+}
+
+// localFilesEntry opens the local file browser without starting a shell.
+func (a *App) localFilesEntry(m locales.Messages) menuEntry {
+	return menuEntry{Icon: icons.LocalDisk, Label: m.LocalFiles(), Do: func() {
+		if _, err := a.OpenLocalFiles(); err != nil {
+			a.toastError(m.ErrGeneric(err.Error()))
+		}
+	}}
 }
 
 // remoteOnly says a pane is on an SSH server, where files can open.

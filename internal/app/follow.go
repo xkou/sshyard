@@ -104,9 +104,16 @@ func (a *App) followCwd(c *ui.Context) {
 				continue
 			}
 			s := &fc.fs.remote
+			if fc.fs.followBaseline {
+				fc.fs.followBaseline = false
+				fc.fs.followed = lead.cwd
+				continue
+			}
 			if s.client == nil {
-				// Not connected yet: it lists there when it is.
-				s.dir = lead.cwd
+				// The remembered folder wins over the initial shell directory.
+				if s.dir == "" && !s.restoringDir {
+					s.dir = lead.cwd
+				}
 				continue
 			}
 			if fc.fs.followed != lead.cwd {
@@ -205,6 +212,7 @@ func (a *App) followAction(t *layout.Tab, n *layout.Node, cn *conn, m locales.Me
 		t.Focus = n.ID
 		cn.fs.noFollow = on
 		cn.fs.followed = ""
+		cn.fs.followBaseline = false
 	}}, true
 }
 
@@ -249,7 +257,7 @@ func (a *App) snippetView(c *ui.Context, cn *conn, tok theme.Tokens, m locales.M
 	if !fs.snippetOpen {
 		return
 	}
-	sheet(ui.Modal(c, &fs.snippetOpen, func() {
+	sheet(a.fileModal(c, cn, "snippet", &fs.snippetOpen, func() {
 		ui.Column(c).Gap(14).Width(540).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				tile(c, icons.Follow, theme.Brand, 36)

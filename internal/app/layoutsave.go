@@ -109,7 +109,7 @@ func (a *App) snapNode(n *layout.Node) *nodeSnap {
 		return &nodeSnap{ID: n.ID, Kind: c.kind.String()}
 	}
 	host := c.host.ID
-	if host == localID {
+	if host == localID && c.kind != layout.Files {
 		host = localID + a.shell(host).ID
 	}
 	s := &nodeSnap{ID: n.ID, Kind: c.kind.String(), Host: host}

@@ -152,6 +152,10 @@ func (a *App) openAskView(c *ui.Context, cn *conn, m locales.Messages) {
 	if ask == nil {
 		return
 	}
+	if !fs.openOpen {
+		fs.open = nil
+		return
+	}
 	// The name may be the server's: shown as in the skip notice, so that
 	// it cannot break the line or reorder what the question says.
 	name := shownName(sideBase(ask.remote, ask.path))
@@ -159,7 +163,7 @@ func (a *App) openAskView(c *ui.Context, cn *conn, m locales.Messages) {
 	if !ask.remote {
 		msg = m.OpenLargeLocalMessage(name, humanSize(ask.size))
 	}
-	if ui.AlertDialog(c.Key("openask"), &fs.openOpen, m.OpenLargeTitle(), msg, m.Cancel(), m.OpenAnyway()) == 1 {
+	if ui.AlertDialog(c.Key(fileDialogKey{cn.id, "openask"}), &fs.openOpen, m.OpenLargeTitle(), msg, m.Cancel(), m.OpenAnyway()) == 1 {
 		a.readForEditor(cn, ask.remote, ask.path, true, ask.asText)
 	}
 	if !fs.openOpen && fs.open == ask {
@@ -202,7 +206,7 @@ func (a *App) withView(c *ui.Context, cn *conn, tok theme.Tokens, m locales.Mess
 		return
 	}
 	name := sideBase(w.remote, w.path)
-	sheet(ui.Modal(c.Key("openwith"), &fs.withOpen, func() {
+	sheet(a.fileModal(c, cn, "openwith", &fs.withOpen, func() {
 		ui.Column(c).Gap(14).Width(380).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				fileImage(c, entryIcon(sftpsvc.Entry{Name: name}), 30)

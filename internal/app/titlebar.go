@@ -20,7 +20,15 @@ func (a *App) SetWindow(w WindowControls) { a.post(func() { a.win = &w }) }
 
 // SetMaximized says whether the window is maximized, for the button that
 // maximizes or restores it.
-func (a *App) SetMaximized(on bool) { a.post(func() { a.maximized = on }) }
+func (a *App) SetMaximized(on bool) {
+	a.post(func() {
+		if a.maximized != on {
+			a.uiTrace.revision++
+		}
+		a.maximized = on
+		a.diagnostic("window.maximized", map[string]any{"on": on, "revision": a.uiTrace.revision})
+	})
+}
 
 // titleBar is the window's one band across the top, which drags it: over
 // the sidebar room for the traffic lights (macOS); over the content the
@@ -29,7 +37,16 @@ func (a *App) SetMaximized(on bool) { a.post(func() { a.maximized = on }) }
 // on the band's middle, the traffic lights' line (barLine).
 func (a *App) titleBar(c *ui.Context, m locales.Messages, tok theme.Tokens, clear bool) {
 	bar := c.TitleBar()
-	row := ui.Row(c.Key("titlebar")).Height(bandHeight(c)).Shrink(0).FillWidth().AlignItems(ui.Center).DragWindow()
+	row := ui.Row(c.Key("titlebar")).Height(bandHeight(c)).Shrink(0).FillWidth().AlignItems(ui.Center)
+	if !a.systemTitleBar {
+		row.DragWindow()
+	}
+	row.HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Kind == ui.InputPointerDown || ev.Kind == ui.InputPointerUp {
+			a.diagnostic("window.toolbar.pointer", map[string]any{"kind": int(ev.Kind), "button": ev.Button, "clicks": ev.Clicks, "x": ev.X, "y": ev.Y, "revision": a.uiTrace.revision})
+		}
+		return false
+	})
 	if a.hasBackground() || !clear {
 		row.Background(a.chromeFill(tok.Sidebar))
 	}

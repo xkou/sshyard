@@ -26,6 +26,7 @@ import (
 	"github.com/Licoy/sshyard/internal/ai/history"
 	"github.com/Licoy/sshyard/internal/ai/policy"
 	"github.com/Licoy/sshyard/internal/assets"
+	"github.com/Licoy/sshyard/internal/filehistory"
 	"github.com/Licoy/sshyard/internal/forward"
 	"github.com/Licoy/sshyard/internal/highlight"
 	"github.com/Licoy/sshyard/internal/keychain"
@@ -50,6 +51,9 @@ type Platform struct {
 	// even with every window hidden; it must never run the callback inline.
 	// When nil, queued callbacks run before the next View frame (ui.Tester).
 	Post func(func())
+	// Diagnostic records native UI geometry and state, without file names,
+	// paths, terminal content or credentials. It must not block the UI.
+	Diagnostic func(event string, fields map[string]any)
 	// SetTrayIcon changes the system tray icon immediately; an error leaves it unchanged.
 	SetTrayIcon func(style string) error
 	// SetRememberLayout changes native geometry persistence; errors leave it unchanged.
@@ -265,6 +269,7 @@ type App struct {
 	settings   settings.Settings
 	background backgroundState
 	store      *assets.Store
+	fileDirs   *filehistory.Store
 	kc         *keychain.Keychain
 	keychainOK bool
 	unlock     unlockState
@@ -311,6 +316,8 @@ type App struct {
 	snippets snippetState
 	// bc is the broadcast panel's state.
 	bc broadcastState
+	// transferQueue is the bottom queue opened from the status bar.
+	transferQueue transferQueueState
 	// tabStart is the first tab the title bar shows when not all fit, the
 	// others in its menu of more tabs; tabRoom the width they had
 	tabStart int
@@ -432,9 +439,12 @@ type App struct {
 	winSvc map[int]ui.Services
 	// win is the window's buttons where the app draws them (see
 	// WindowControls), maximized whether the window is
-	win         *WindowControls
-	maximized   bool
-	updateCheck bool
+	win       *WindowControls
+	maximized bool
+	// systemTitleBar is the main window's startup style; changing its
+	// preference takes effect on relaunch, together with native chrome.
+	systemTitleBar bool
+	updateCheck    bool
 	// updEvery is the index of the update interval in its control;
 	// updProxy the updates' proxy choice in its select.
 	updEvery  int
@@ -446,6 +456,7 @@ type App struct {
 	lkChoice, lkMCPChoice bool
 	fonts                 fontState
 	zoom                  zoomState
+	uiTrace               uiDiagnosticState
 	// hl colors the keywords of the terminals' output as settings.Highlight
 	// says; nil until built, again after it changes.
 	hl *highlight.Highlighter
@@ -556,9 +567,10 @@ type App struct {
 	layoutSaveFailed bool
 	layoutObserved   []byte
 	layoutDue        time.Time
-	// localName is what local terminals are called, in the language of
-	// the last frame.
-	localName string
+	// localName and localFilesName are the local pane names, in the
+	// language of the last frame.
+	localName      string
+	localFilesName string
 	// logs is the session logs pane's.
 	logs logsState
 	// toolNames are what the tool panes are called, in the language of
@@ -636,6 +648,7 @@ func New(p Platform) (*App, error) {
 	}
 	a.upd.OnChange(a.invalidate)
 	err := a.prepareStorage()
+	a.systemTitleBar = !a.settings.HideSystemTitleBar
 	a.unlock.err = err
 	a.syncChoices()
 	a.resolveFonts(false, false, false)
@@ -676,7 +689,17 @@ func (a *App) loadData() error {
 		}
 	}
 
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	if a.fileDirs != nil {
+		a.fileDirs.Close()
+	}
+	a.fileDirs, err = filehistory.Open(path("file-locations.json"), func(err error) { a.fileLocationError("write", err) })
+	if err != nil {
+		a.fileLocationError("read", err)
+	}
+	return nil
 }
 
 type disabledUpdates struct{}
@@ -924,6 +947,7 @@ func (a *App) Close() {
 	a.closed = true
 	a.queue = nil
 	a.mu.Unlock()
+	a.fileDirs.Close()
 	a.unlock.mu.Lock()
 	defer a.unlock.mu.Unlock()
 	a.unlock.closed = true
@@ -1005,7 +1029,7 @@ func (a *App) makeConn(hostID string, kind layout.Kind, link int) (*conn, error)
 		return nil, assets.ErrNotFound
 	}
 	// An assistant opens on any host: on these it types into the terminal.
-	if isLocal(h.ID) && kind != layout.Terminal && kind != layout.AI {
+	if isLocal(h.ID) && kind != layout.Terminal && kind != layout.Files && kind != layout.AI {
 		return nil, errLocalTerminalOnly
 	}
 	if isStream(h) && kind != layout.Terminal && kind != layout.AI {
@@ -1027,6 +1051,13 @@ func (a *App) makeConn(hostID string, kind layout.Kind, link int) (*conn, error)
 			agentName = "builtin"
 		}
 		c.ai = &aiState{agent: agentName, link: link, provider: a.defaultProvider()}
+		a.conns[c.id] = c
+		return c, nil
+	}
+	if kind == layout.Files && isLocal(h.ID) {
+		c.fs = newFilesState(a.invalidate)
+		c.fs.transfers.Client = a.transferClient(c)
+		c.fs.transfers.SetConcurrency(a.settings.TransferConcurrency)
 		a.conns[c.id] = c
 		return c, nil
 	}
@@ -1057,6 +1088,11 @@ func (a *App) makeConn(hostID string, kind layout.Kind, link int) (*conn, error)
 	c.s.OnChange = a.invalidate
 	if kind != layout.Terminal {
 		c.fs = newFilesState(a.invalidate)
+		if kind == layout.Files {
+			c.fs.remote.dir = a.fileDirs.Get(h.ID)
+			c.fs.remote.restoringDir = c.fs.remote.dir != ""
+			c.fs.followBaseline = c.fs.remote.restoringDir
+		}
 		c.fs.transfers.Client = a.transferClient(c)
 		c.fs.transfers.SetConcurrency(a.settings.TransferConcurrency)
 	} else {

@@ -42,13 +42,17 @@ type sideList struct {
 	// reveal is the name chosen once the folder lists, for an entry gone
 	// to from the breadcrumbs.
 	reveal string
-	// rows are where the rows showed in the last frame, for the row a
-	// right-click is on.
-	rows []rowMark
+	// rows retain the geometry painted by the current frame, including
+	// rows the virtualized table only builds during layout.
+	rows                       []*rowMark
+	marquee                    fileMarquee
+	pendingOpen                string
+	generation, windowRevision uint64
+	trace                      fileTableDiagnostics
 	// refocus gives the rows the keys back as their menu closes.
 	refocus bool
-	// width is the table's width in the last frame, which the columns it
-	// shows follow.
+	// width is the space allocated to the table by its pane, independent
+	// of the columns the table currently shows.
 	width float32
 	// sizes are the sizes of folders here calculated on request, by name.
 	sizes map[string]*dirSize
@@ -79,17 +83,20 @@ func (sd *sideList) dropSizes() {
 	sd.sizes = nil
 }
 
-// rowMark is where a row of a side showed: its entry's name and the top
-// and bottom of its name, in the window's DIPs.
+// rowMark keeps the painted name box. Handle bindings created by late
+// list rows are not committed until another frame in MyGo v0.7.4.
 type rowMark struct {
-	name        string
-	top, bottom float32
+	name   string
+	index  int
+	bounds ui.Rect
 }
 
 // show lists es as the side's folder dir. The entries chosen stay chosen
 // in the folder they were chosen in, while they are there; reveal, when
 // set, is chosen instead.
 func (sd *sideList) show(dir string, es []sftpsvc.Entry) {
+	sd.marquee = fileMarquee{}
+	sd.pendingOpen = ""
 	if dir != sd.dir {
 		sd.chosen.Clear()
 		sd.dropSizes()
@@ -124,6 +131,7 @@ func (sd *sideList) resort() {
 	if sd.sort.Column == sd.sorted.Column && sd.sorted.Descending && !sd.sort.Descending {
 		sd.sort = ui.SortOrder{} // the third click
 	}
+	sd.marquee = fileMarquee{}
 	sd.sorted = sd.sort
 	name := ""
 	if e, ok := selected(sd.sel, sd.entries); ok {
@@ -208,7 +216,11 @@ func (sd *sideList) rowAt(y float32) (string, bool) {
 	const room = 8
 	best, dist := "", float32(room+1)
 	for _, r := range sd.rows {
-		d := max(r.top-y, y-r.bottom, 0)
+		b := r.bounds
+		if b.H <= 0 {
+			continue
+		}
+		d := max(b.Y-y, y-b.Y-b.H, 0)
 		if d < dist {
 			best, dist = r.name, d
 		}
@@ -229,6 +241,11 @@ type remoteSide struct {
 	// a finished transfer triggers in the same frame.
 	// shortcut: it also stays across a later folder change, until the next plan, delete, or reconnect.
 	listErr bool
+	// restoringDir protects a remembered initial folder from the
+	// terminal's first directory report until the first listing succeeds.
+	restoringDir bool
+	// listSeq discards older requests that complete after a newer one.
+	listSeq uint64
 	// unfinished are saves in dir a cut left undone: the file missing,
 	// its old version at a backup, to restore or discard.
 	unfinished []sftpsvc.Unfinished
@@ -249,6 +266,10 @@ type localSide struct {
 	// shortcut: it also stays across a later folder change, until the next plan, delete, or reconnect.
 	listErr bool
 	loaded  bool
+	// names are resolved off the UI thread. namesSeq keeps a previous
+	// folder's lookup from replacing the current folder's results.
+	names    *idNames
+	namesSeq uint64
 }
 
 // filesState is what a files pane keeps: both sides, its transfers and
@@ -257,6 +278,9 @@ type filesState struct {
 	remote    remoteSide
 	local     localSide
 	transfers *sftpsvc.Transfers
+	// favorites is the folder favorites sheet of one side.
+	favorites     *fileFavoritesForm
+	favoritesOpen bool
 	// ask is the open name or mode dialog (new folder or file, rename,
 	// permissions), del the delete confirmation, conflict the same-name
 	// dialog of a transfer being planned.
@@ -289,13 +313,17 @@ type filesState struct {
 	// followed is the directory it last went to for it
 	noFollow bool
 	followed string
+	// followBaseline consumes the terminal's first directory report when
+	// reopening a remembered folder; later directory changes still follow.
+	followBaseline bool
 	// noReportHidden hides the line saying the terminal followed does not
 	// report its directory, snippetOpen is its sheet with the snippet.
 	noReportHidden bool
 	snippetOpen    bool
 	// queueOpen is the transfers sheet, queue its list.
-	queueOpen bool
-	queue     ui.ListState
+	queueOpen   bool
+	queue       ui.ListState
+	dialogTrace map[string]*fileDialogTrace
 	// done is how many transfers were done when the sides were last
 	// listed again for them, at refreshed.
 	done      int
@@ -352,6 +380,10 @@ func (fs *filesState) side(remote bool) *sideList {
 
 func (fs *filesState) close() {
 	fs.transfers.CancelAll()
+	if fs.favorites != nil && fs.favorites.cancel != nil {
+		fs.favorites.cancel()
+	}
+	fs.favorites = nil
 	if fs.working != nil {
 		fs.working.cancel()
 	}
@@ -367,6 +399,7 @@ func (fs *filesState) close() {
 	fs.pub.Unlock()
 	if fs.remote.client != nil {
 		fs.remote.client.Close()
+		fs.remote.client = nil
 	}
 }
 
@@ -382,6 +415,9 @@ func (fs *filesState) publish(c *sftpsvc.Client, connects int) {
 // the pane connects or reconnects.
 func (a *App) transferClient(cn *conn) func(context.Context) (*sftpsvc.Client, error) {
 	return func(ctx context.Context) (*sftpsvc.Client, error) {
+		if cn.s == nil {
+			return nil, errNotConnected
+		}
 		for {
 			st := cn.s.Status()
 			switch st.State {
@@ -413,6 +449,9 @@ func (a *App) transferClient(cn *conn) func(context.Context) (*sftpsvc.Client, e
 // ensureSFTP opens SFTP on the pane's connection, again after it
 // reconnected.
 func (a *App) ensureSFTP(cn *conn) {
+	if cn.s == nil {
+		return
+	}
 	s := &cn.fs.remote
 	st := cn.s.Status()
 	h := a.liveHost(cn.host)
@@ -434,7 +473,9 @@ func (a *App) ensureSFTP(cn *conn) {
 	}
 	s.opening, s.err, s.listErr = true, "", false
 	connects := st.Connects
-	dir, start := s.dir, cn.host.RemoteDir
+	dir, start := s.dir, h.RemoteDir
+	s.listSeq++
+	seq := s.listSeq
 	go func() {
 		var c *sftpsvc.Client
 		var err error
@@ -452,23 +493,26 @@ func (a *App) ensureSFTP(cn *conn) {
 		if err == nil {
 			home, err = c.Home()
 		}
-		listed := false
-		if err == nil && dir == "" && start != "" {
-			// The host's folder, or home when it cannot be listed.
-			d := remoteStart(home, start)
-			if es, un, err = c.ListUnfinished(d); err == nil {
-				dir, listed = d, true
-			} else {
-				err = nil
+		if err == nil {
+			seen := map[string]bool{}
+			for _, candidate := range []string{dir, remoteStart(home, start), home} {
+				if candidate == "" || seen[candidate] {
+					continue
+				}
+				seen[candidate] = true
+				if es, un, err = c.ListUnfinished(candidate); err == nil {
+					dir = candidate
+					break
+				}
 			}
-		}
-		if err == nil && !listed {
-			if dir == "" {
-				dir = home
-			}
-			es, un, err = c.ListUnfinished(dir)
 		}
 		a.post(func() {
+			if a.conns[cn.id] != cn || cn.fs == nil || &cn.fs.remote != s || s.listSeq != seq {
+				if c != nil {
+					c.Close()
+				}
+				return
+			}
 			s.opening = false
 			if err != nil {
 				s.err, s.listErr = err.Error(), true
@@ -482,8 +526,8 @@ func (a *App) ensureSFTP(cn *conn) {
 				return
 			}
 			s.sudoHeld = false
-			s.client, s.connects, s.unfinished, s.home = c, connects, un, home
-			s.show(dir, es)
+			s.client, s.connects, s.home = c, connects, home
+			a.remoteListed(s, dir, es, un)
 			cn.fs.publish(c, connects)
 			if cn.kind == layout.Files {
 				a.readNames(cn, c)
@@ -492,7 +536,7 @@ func (a *App) ensureSFTP(cn *conn) {
 	}()
 }
 
-// idNames are a server's user and group names, by ID.
+// idNames are a side's user and group names, by ID.
 type idNames struct{ users, groups map[uint32]string }
 
 // readNames reads the names of the users and groups of the server of c,
@@ -513,9 +557,14 @@ func (a *App) listRemote(s *remoteSide, dir string) {
 	if c == nil {
 		return
 	}
+	s.listSeq++
+	seq := s.listSeq
 	go func() {
 		es, un, err := c.ListUnfinished(dir)
 		a.post(func() {
+			if s.client != c || s.listSeq != seq {
+				return
+			}
 			if err != nil {
 				s.err, s.listErr = err.Error(), true
 				return
@@ -523,8 +572,7 @@ func (a *App) listRemote(s *remoteSide, dir string) {
 			if s.listErr {
 				s.err, s.listErr = "", false
 			}
-			s.unfinished = un
-			s.show(dir, es)
+			a.remoteListed(s, dir, es, un)
 		})
 	}()
 }
@@ -566,6 +614,7 @@ func (a *App) listLocalFirst(cn *conn) {
 		if es, err := sftpsvc.ListLocal(dir); err == nil {
 			l.loaded = true
 			l.show(dir, es)
+			a.readLocalNames(l, es)
 			return
 		}
 	}
@@ -586,6 +635,34 @@ func (a *App) listLocal(l *localSide, dir string) {
 		l.err, l.listErr = "", false
 	}
 	l.show(dir, es)
+	a.readLocalNames(l, es)
+}
+
+// readLocalNames resolves owners once per listing, outside the frame that
+// displays it. Widening a table can reveal its permissions column; drawing
+// that column must never wait for the system's user or group lookup.
+func (a *App) readLocalNames(l *localSide, es []sftpsvc.Entry) {
+	l.namesSeq++
+	seq := l.namesSeq
+	go func() {
+		names := &idNames{users: map[uint32]string{}, groups: map[uint32]string{}}
+		for _, e := range es {
+			if !e.IDs {
+				continue
+			}
+			if _, ok := names.users[e.UID]; !ok {
+				names.users[e.UID] = sftpsvc.LocalUser(e.UID)
+			}
+			if _, ok := names.groups[e.GID]; !ok {
+				names.groups[e.GID] = sftpsvc.LocalGroup(e.GID)
+			}
+		}
+		a.post(func() {
+			if l.namesSeq == seq {
+				l.names = names
+			}
+		})
+	}()
 }
 
 // goTo lists the folder dir on a side.
@@ -847,9 +924,15 @@ var deleteMods, deleteKey = func() (ui.Modifiers, ui.Key) {
 // name, which opens the row as Submitted does. The table shows the
 // columns its width has room for (tableColumns), whose headers sort the
 // rows (resort).
-func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, m locales.Messages, tok theme.Tokens) (tb ui.Element, opened bool) {
+func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, width float32, m locales.Messages, tok theme.Tokens) (tb ui.Element, opened bool) {
 	fs := cn.fs
 	sd := fs.side(remote)
+	if sd.generation == 0 || sd.width != width || sd.windowRevision != a.uiTrace.revision {
+		sd.width, sd.windowRevision = width, a.uiTrace.revision
+		sd.generation++
+		sd.rows, sd.marquee = nil, fileMarquee{}
+		a.diagnostic("files.layout", map[string]any{"pane": cn.id, "remote": remote, "width": width, "revision": sd.windowRevision, "generation": sd.generation})
+	}
 	sd.resort()
 	es, list := sd.entries, &sd.list
 	list.Key = func(i int) any { return es[i].Name }
@@ -897,7 +980,7 @@ func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, m locales.Messages
 	zoom := a.settings.FilesScale()
 	dense := theme.Dense(*c.Theme())
 	dense.FontSize, dense.Spacing = dense.FontSize*zoom, dense.Spacing*zoom
-	ui.Themed(c.Key(key+":dense"), dense).Background(ui.Transparent).Grow(1).FillWidth().MinHeight(0).Children(func() {
+	ui.Themed(c.Key(key+":dense"), dense).Background(ui.Transparent).Grow(1).Shrink(1).FillWidth().MinWidth(0).MinHeight(0).Children(func() {
 		tb = ui.Table(c.Key(key), list, cols, len(es), func(row, col int) {
 			e := es[row]
 			on := sd.chosen.Has(e.Name)
@@ -912,20 +995,21 @@ func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, m locales.Messages
 						fileImage(c, entryIcon(e), 14*zoom)
 						ui.Text(c, e.Name).SingleLine().Shrink(1)
 					})
-					nb := name.Bounds()
-					if nb.H > 0 {
-						sd.rows = append(sd.rows, rowMark{e.Name, nb.Y, nb.Y + nb.H})
-					} else {
-						c.Invalidate() // a row new here: where it is shows next frame
-					}
-					// The name counts the clicks on it whether its row is chosen
-					// or not, so that a double click opens a row the first
-					// click chose, and takes the right clicks over it.
+					mark := &rowMark{name: e.Name, index: row, bounds: name.Bounds()}
+					sd.rows = append(sd.rows, mark)
+					dragging := false
+					name.Draw(func(_ *ui.Painter, r ui.Rect) {
+						if !dragging {
+							mark.bounds = r
+						}
+					})
 					name.HandleInput(func(ev ui.InputEvent) bool {
+						a.traceFilePointer(c, cn, remote, "name", row, ev)
 						if ev.Kind != ui.InputPointerDown || ev.Button != 1 {
 							return false
 						}
-						menu(nb.X+ev.X, nb.Y+ev.Y)
+						b := mark.bounds
+						menu(b.X+ev.X, b.Y+ev.Y)
 						return true
 					})
 					if !on {
@@ -933,6 +1017,7 @@ func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, m locales.Messages
 					}
 					// Chosen, the name drags the rows chosen, and takes its clicks.
 					name.Drag(filesDrag{pane: cn.id, remote: remote, paths: chosen})
+					dragging = name.Dragging()
 					dbl, clk := name.DoubleClicked(), name.Clicked()
 					switch {
 					case dbl:
@@ -967,34 +1052,29 @@ func (a *App) fileTable(c *ui.Context, cn *conn, remote bool, m locales.Messages
 				text, detail := a.permText(fs, remote, e, m)
 				ui.Text(c, text).TextColor(muted).SingleLine().Shrink(1).Grow(1).Tooltip(detail)
 			}
-		}).Grow(1).FillWidth()
+		}).Grow(1).Shrink(1).FillWidth().MinWidth(0).MinHeight(0)
 	})
 	if extend >= 0 {
 		list.ExtendTo(extend)
 	}
-	b := tb.Bounds()
-	if b.W != sd.width {
-		sd.width = b.W
-		if len(tableColumns(b.W, remote)) != len(ids) {
-			c.Invalidate() // the columns for this width show next frame
+	a.fileMarqueeView(c, cn, remote, tb, dense.Space(8)+1, tok, menu)
+	if sd.pendingOpen != "" {
+		if row := slices.IndexFunc(sd.entries, func(e sftpsvc.Entry) bool { return e.Name == sd.pendingOpen }); row >= 0 {
+			sd.only(row)
+			opened = true
 		}
+		sd.pendingOpen = ""
 	}
-	tb.HandleInput(func(ev ui.InputEvent) bool {
-		if ev.Kind != ui.InputPointerDown || ev.Button != 1 {
-			return false
-		}
-		menu(b.X+ev.X, b.Y+ev.Y)
-		return true
-	})
 	if sd.refocus && a.menu.key != ctxMenuKey {
 		// The menu closed: the keys go back to the rows, unless a dialog
 		// it opened takes them.
 		sd.refocus = false
-		if !fs.askOpen && !fs.delOpen && !fs.compressOpen && !fs.infoOpen && !fs.previewOpen {
+		if !fs.askOpen && !fs.delOpen && !fs.compressOpen && !fs.infoOpen && !fs.previewOpen && !fs.favoritesOpen {
 			tb.Focus()
 		}
 	}
 	a.fileKeys(c, cn, remote, tb, entries)
+	a.traceFileTable(c, cn, remote, len(ids))
 	return tb, opened
 }
 
@@ -1034,14 +1114,15 @@ func (a *App) permText(fs *filesState, remote bool, e sftpsvc.Entry, m locales.M
 		return text + ")", e.Mode.String()
 	}
 	user, group := strconv.FormatUint(uint64(e.UID), 10), strconv.FormatUint(uint64(e.GID), 10)
-	switch {
-	case !remote:
-		user, group = sftpsvc.LocalUser(e.UID), sftpsvc.LocalGroup(e.GID)
-	case fs.names != nil:
-		if n, ok := fs.names.users[e.UID]; ok {
+	names := fs.names
+	if !remote {
+		names = fs.local.names
+	}
+	if names != nil {
+		if n, ok := names.users[e.UID]; ok {
 			user = n
 		}
-		if n, ok := fs.names.groups[e.GID]; ok {
+		if n, ok := names.groups[e.GID]; ok {
 			group = n
 		}
 	}
@@ -1063,6 +1144,7 @@ func (a *App) dirSizeCell(c *ui.Context, cn *conn, remote bool, name string, on 
 		label := m.CalculateSizeHint(shownName(name))
 		b := ui.ButtonBase(c.Key("calc:"+name)).Label(label).Tooltip(label).Padding(0, 4).Radius(theme.RadiusSmall).
 			Disabled(remote && cn.fs.remote.client == nil)
+		b.HandleInput(func(ui.InputEvent) bool { return false })
 		if !b.IsDisabled() {
 			b.Cursor(ui.CursorPointer)
 		}
@@ -1142,6 +1224,7 @@ func (a *App) fileKeys(c *ui.Context, cn *conn, remote bool, tb ui.Element, entr
 	case len(es) == 1 && tb.Shortcut(0, ui.KeyF2):
 		fs.ask, fs.askOpen = &nameAsk{kind: askRename, remote: remote, path: sidePath(remote, sd.dir, es[0].Name), value: es[0].Name}, true
 	case tb.Shortcut(0, ui.KeyEscape):
+		sd.marquee = fileMarquee{}
 		sd.chosen.Clear()
 	}
 	if tb.Shortcut(ui.Shift, ui.KeyF10) {
@@ -1173,15 +1256,28 @@ const filesCrumbsMin = 120
 // pane shows both (Settings.FilesDual), then the pane's transfers.
 func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, width float32, tok theme.Tokens, m locales.Messages) {
 	fs := cn.fs
-	dual := a.settings.FilesDual
-	if dual && !fs.local.loaded {
+	localOnly := isLocal(cn.host.ID)
+	dual := a.settings.FilesDual && !localOnly
+	if (dual || localOnly) && !fs.local.loaded {
 		a.listLocalFirst(cn)
 	}
 	a.ensureSFTP(cn)
 	a.refreshForTransfers(c, cn)
 	l, s := &fs.local, &fs.remote
 	stacked := width > 0 && width < 620
-	body := ui.Column(c.Key("files")).Grow(1).FillWidth().Padding(8).Gap(8)
+	// Derive the viewports from the pane and its split. Reading a table's
+	// own bounds to choose its columns feeds content size back into the
+	// next layout and can make both sides repeatedly rebuild on resize.
+	room := max(width-2-theme.Space(4), 0) // pane border and body padding
+	chrome := theme.Space(3) + 2           // each side's padding and border
+	localWidth, remoteWidth := max(room-chrome, 0), max(room-chrome, 0)
+	if dual && !stacked {
+		shared := max(room-1, 0) // divider
+		share := min(max(a.filesSplit, 10), 90) / 100
+		localWidth = max(shared*share-5-chrome, 0)
+		remoteWidth = max(shared*(1-share)-5-chrome, 0)
+	}
+	body := ui.Column(c.Key("files")).Grow(1).Shrink(1).FillWidth().MinWidth(0).MinHeight(0).Padding(8).Gap(8)
 	body.Children(func() {
 		a.unfinishedView(c, cn, tok, m)
 		a.noReportView(c, t, cn, tok, m)
@@ -1205,25 +1301,34 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 		// sideCard is a side's card: its header, the breadcrumbs of its
 		// folder and its rows, kept inside its rounded edge.
 		sideCard := func(key string) ui.Element {
-			return ui.Column(c.Key(key)).Fill().Gap(2).Padding(4, 6, 6, 6).Radius(theme.RadiusCard-2).Border(1, tok.Line).Clip()
+			return ui.Column(c.Key(key)).Fill().Shrink(1).MinWidth(0).MinHeight(0).Gap(2).Padding(4, 6, 6, 6).Radius(theme.RadiusCard-2).Border(1, tok.Line).Clip()
 		}
 		localPane := func() {
-			ui.Box(c.Key("lpad")).Fill().Padding(gap(true)).Children(func() {
+			ui.Box(c.Key("lpad")).Fill().MinWidth(0).MinHeight(0).Padding(gap(true)).Children(func() {
 				local := sideCard("local")
 				local.Children(func() {
 					picked := l.picked()
-					a.sideHeader(c, "lhead:"+strconv.Itoa(cn.id), tok, icons.LocalDisk, m.Local(), []barAction{
+					acts := []barAction{
 						{Key: "lup", Button: IconButton{Icon: icons.GoUp, Label: m.LocalUp(), Size: Tiny},
 							Do: func() { a.listLocal(l, filepath.Dir(l.dir)) }},
+						{Key: "lfavorites", Button: IconButton{Icon: icons.Star, On: icons.StarOn, Label: m.LocalFileFavorites(), Active: fs.favoritesOpen && fs.favorites != nil && !fs.favorites.remote, Size: Tiny},
+							Do: func() { a.openFileFavorites(cn, false) }},
 						{Key: "lrefresh", Button: IconButton{Icon: icons.Refresh, Label: m.LocalRefresh(), Size: Tiny},
 							Do: func() { a.listLocal(l, l.dir) }},
 						{Key: "lmkdir", Button: IconButton{Icon: icons.NewFolder, Label: m.LocalNewFolder(), Size: Tiny},
 							Do: func() { fs.ask, fs.askOpen = &nameAsk{kind: askMkdir}, true }},
-						{Key: "upload", Button: IconButton{Icon: icons.Upload, Label: m.UploadSelected(), Disabled: s.client == nil || len(picked) == 0, Size: Tiny},
-							Do: func() { a.Upload(cn, l.paths(false, picked), s.dir) }},
-					}, m)
+					}
+					if !localOnly {
+						acts = append(acts, barAction{Key: "upload", Button: IconButton{Icon: icons.Upload, Label: m.UploadSelected(), Disabled: s.client == nil || len(picked) == 0, Size: Tiny},
+							Do: func() { a.Upload(cn, l.paths(false, picked), s.dir) }})
+					}
+					a.sideHeader(c, "lhead:"+strconv.Itoa(cn.id), tok, icons.LocalDisk, m.Local(), acts, m)
 					a.crumbsBar(c, cn, false, tok, m)
-					tb, opened := a.fileTable(c, cn, false, m, tok)
+					tb, opened := a.fileTable(c, cn, false, localWidth, m, tok)
+					if localOnly && a.focusReq == cn.id && a.page == pageWorkspace {
+						tb.Focus()
+						a.focusReq = 0
+					}
 					if e, ok := selected(l.sel, l.entries); (tb.Submitted() || opened) && ok {
 						a.openEntry(cn, false, e)
 					}
@@ -1258,6 +1363,8 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 						a.listRemote(s, sftpsvc.RemoteParent(s.dir))
 					}
 				}},
+				barAction{Key: "rfavorites", Button: IconButton{Icon: icons.Star, On: icons.StarOn, Label: m.RemoteFileFavorites(), Active: fs.favoritesOpen && fs.favorites != nil && fs.favorites.remote, Size: Tiny},
+					Do: func() { a.openFileFavorites(cn, true) }},
 				barAction{Key: "rrefresh", Button: IconButton{Icon: icons.Refresh, Label: m.RemoteRefresh(), Disabled: off, Size: Tiny},
 					Do: func() { a.listRemote(s, s.dir) }},
 				barAction{Key: "rmkdir", Button: IconButton{Icon: icons.NewFolder, Label: m.RemoteNewFolder(), Disabled: off, Size: Tiny},
@@ -1277,7 +1384,7 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 				Do: func() { a.downloadTo(cn, s.paths(true, picked), m) }})
 		}
 		remotePane := func() {
-			ui.Box(c.Key("rpad")).Fill().Padding(gap(false)).Children(func() {
+			ui.Box(c.Key("rpad")).Fill().MinWidth(0).MinHeight(0).Padding(gap(false)).Children(func() {
 				remote := sideCard("remote")
 				remote.Children(func() {
 					if dual {
@@ -1316,7 +1423,7 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 					if dual {
 						a.crumbsBar(c, cn, true, tok, m)
 					}
-					tb, opened := a.fileTable(c, cn, true, m, tok)
+					tb, opened := a.fileTable(c, cn, true, remoteWidth, m, tok)
 					if a.focusReq == cn.id && a.page == pageWorkspace {
 						tb.Focus()
 						a.focusReq = 0
@@ -1346,12 +1453,14 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 			})
 		}
 		switch {
+		case localOnly:
+			ui.Column(c.Key("single")).Grow(1).FillWidth().MinHeight(0).Children(localPane)
 		case !dual:
 			ui.Column(c.Key("single")).Grow(1).FillWidth().MinHeight(0).Children(remotePane)
 		case stacked:
-			ui.SplitVerticalPercent(c.Key("stacked"), &a.filesSplit, localPane, remotePane).Grow(1).FillWidth()
+			ui.SplitVerticalPercent(c.Key("stacked"), &a.filesSplit, localPane, remotePane).Grow(1).Shrink(1).FillWidth().MinWidth(0).MinHeight(0)
 		default:
-			ui.SplitPercent(c.Key("sides"), &a.filesSplit, localPane, remotePane).Grow(1).FillWidth()
+			ui.SplitPercent(c.Key("sides"), &a.filesSplit, localPane, remotePane).Grow(1).Shrink(1).FillWidth().MinWidth(0).MinHeight(0)
 		}
 	})
 	if dual {
@@ -1360,16 +1469,6 @@ func (a *App) filesBody(c *ui.Context, t *layout.Tab, n *layout.Node, cn *conn, 
 	if body.FocusWithin() && t.Focus != n.ID {
 		t.Focus = n.ID
 	}
-	a.askView(c, cn, m)
-	a.deleteView(c, cn, m)
-	a.conflictView(c, cn, m)
-	a.openAskView(c, cn, m)
-	a.withView(c, cn, tok, m)
-	a.snippetView(c, cn, tok, m)
-	a.transfersSheet(c, cn, tok, m)
-	a.infoView(c, cn, tok, m)
-	a.compressView(c, cn, tok, m)
-	a.previewView(c, cn, tok, m)
 }
 
 // splitRest is how long the files panes' split rests before it is saved.

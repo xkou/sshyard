@@ -223,6 +223,7 @@ func (a *App) promote(tmp string, h assets.Host) {
 	for _, c := range a.conns {
 		if c.host.ID == tmp {
 			c.host = h
+			a.rememberRemoteDirectory(c)
 		}
 	}
 	if h.Auth == assets.AuthAsk {

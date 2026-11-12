@@ -203,6 +203,7 @@ func (a *App) newTabEntries(c *ui.Context, m locales.Messages) []menuEntry {
 		a.bound(actQuickConnect, menuEntry{Icon: icons.Quick, Label: m.QuickConnectMenu(), Do: a.OpenQuickConnect}),
 		{Icon: icons.Host, Label: m.NewHost(), Do: func() { a.openEditor(nil) }},
 		a.localEntry(m),
+		a.localFilesEntry(m),
 	}
 	hosts := a.store.List()
 	if len(hosts) > 0 {

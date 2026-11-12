@@ -100,7 +100,9 @@ func (a *App) actionBar(c *ui.Context, key string, w, reserve, gap float32, acts
 				continue
 			}
 			if b.Button.Clicked(c, b.Key) && b.Do != nil {
+				a.diagnostic("ui.action", map[string]any{"bar": key, "action": b.Key, "frame": a.uiTrace.frame, "revision": a.uiTrace.revision})
 				b.Do()
+				a.invalidate()
 			}
 		}
 		if len(hidden) == 0 && menu == nil {

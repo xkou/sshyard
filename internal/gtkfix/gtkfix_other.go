@@ -7,3 +7,6 @@ func Apply() bool { return false }
 
 // TextColor does nothing: only cairo's glyphs on Linux need the fix.
 func TextColor() bool { return false }
+
+func TraceInput(func(string, map[string]any)) bool { return false }
+func InputState() map[string]any                   { return nil }

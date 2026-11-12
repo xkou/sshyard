@@ -230,12 +230,14 @@ func TestLocalTerminal(t *testing.T) {
 	a.OpenFilesBeside()
 	a.OpenAIBeside()
 	tt.Frame()
-	if tab.Count(layout.Files) != 0 || tab.Count(layout.AI) != 1 {
-		t.Errorf("files, or no assistant, on this computer: %v", a.ws.Items())
+	if tab.Count(layout.Files) != 1 || tab.Count(layout.AI) != 1 {
+		t.Errorf("missing local files or assistant: %v", a.ws.Items())
 	}
-	if _, err := a.OpenFiles(localID, openAt{}, nil); err != errLocalTerminalOnly {
-		t.Errorf("open files: %v", err)
+	files, err := a.OpenFiles(localID, openAt{}, nil)
+	if err != nil || a.conns[files].s != nil {
+		t.Fatalf("open local files: %v", err)
 	}
+	a.CloseSession(files)
 
 	// Another, with a tab open: under the focused pane, in its tab.
 	above := a.focused()

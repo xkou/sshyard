@@ -14,8 +14,8 @@ const statusBarHeight = 30
 // statusBar is the band along the bottom of the content: on the left the
 // focused session (its state, time connected, directory) and
 // what runs (sessions, forwards, an update); on the right IconButtons to
-// a local terminal, the theme, privacy, the command palette and the
-// shortcuts. The settings
+// the active transfer queue, a local terminal, the theme, privacy, the
+// command palette and the shortcuts. The settings
 // are in the title bar.
 func (a *App) statusBar(c *ui.Context, m locales.Messages, tok theme.Tokens) {
 	a.backgroundSeparator(c, tok.GlassEdge, a.chromeFill(tok.Glass)).Height(1).Shrink(0).FillWidth()
@@ -57,7 +57,11 @@ func (a *App) statusSession(c *ui.Context, m locales.Messages, tok theme.Tokens)
 		if cn.s != nil {
 			dot(c, stateColor(tok, st.State)).Label(a.pv(a.statusText(m, h, st, c.Now())))
 		}
-		ui.Text(c, a.pv(h.Label())).FontSize(theme.Caption).FontWeight(600).SingleLine().Shrink(0)
+		label := a.pv(h.Label())
+		if cn.kind == layout.Files && isLocal(cn.host.ID) {
+			label = m.LocalFiles()
+		}
+		ui.Text(c, label).FontSize(theme.Caption).FontWeight(600).SingleLine().Shrink(0)
 		ui.Text(c, a.pv(h.Target())).FontSize(theme.Caption).TextColor(tok.TextMuted).SingleLine().Shrink(1)
 	})
 	if cn.s == nil || st.State != session.Connected {
@@ -122,6 +126,7 @@ func themeIcon(md theme.Mode) *icons.Icon {
 func (a *App) statusActions(c *ui.Context, m locales.Messages, tok theme.Tokens) {
 	ui.Row(c.Key("actions")).Shrink(0).Gap(theme.Space(1)).AlignItems(ui.Center).Children(func() {
 		a.outputEncodingChip(c, m)
+		a.transferQueueButton(c, m)
 		if (IconButton{Icon: icons.LocalShell, Label: m.LocalTerminal(), Size: Small}).Clicked(c, "localterm") {
 			a.openLocal(m, "", true)
 		}

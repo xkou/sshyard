@@ -121,18 +121,25 @@ func (c *Client) List(dir string) ([]Entry, error) {
 
 // ListContext interrupts a stalled listing on its own SFTP channel.
 func (c *Client) ListContext(ctx context.Context, dir string) ([]Entry, error) {
+	es, _, err := c.ListUnfinishedContext(ctx, dir)
+	return es, err
+}
+
+// ListUnfinishedContext lists a directory and its unfinished saves on a
+// dedicated channel, which cancellation closes without ending the connection.
+func (c *Client) ListUnfinishedContext(ctx context.Context, dir string) ([]Entry, []Unfinished, error) {
 	sub, err := c.operationClient(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer sub.Close()
 	stop := context.AfterFunc(ctx, func() { sub.Close() })
 	defer stop()
-	es, err := sub.List(dir)
+	es, unfinished, err := sub.ListUnfinished(dir)
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
-	return es, err
+	return es, unfinished, err
 }
 
 // ListUnfinished lists a remote directory, directories first, and the

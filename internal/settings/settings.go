@@ -29,6 +29,9 @@ type Settings struct {
 	CloseBehavior string `json:"closeBehavior"`
 	// RememberLayout restores window geometry and the workspace on next launch.
 	RememberLayout bool `json:"rememberLayout"`
+	// HideSystemTitleBar uses the app's unified toolbar instead of the
+	// system title bar. It takes effect when the main window is created.
+	HideSystemTitleBar bool `json:"hideSystemTitleBar"`
 	// ToolPanes is how the right rail opens its tools: "", the default,
 	// in the place of the one open in the tab, one at a time, or
 	// ToolPanesSplit beside the ones already open.
@@ -128,6 +131,9 @@ type Settings struct {
 	// FilesZoom is how large the rows of files panes show, in percent,
 	// one of FilesZooms; 0 is 100.
 	FilesZoom int `json:"filesZoom,omitempty"`
+	// FileFavorites keeps favorite folders separately for this computer
+	// and for each remote host, by host ID.
+	FileFavorites map[string][]string `json:"fileFavorites,omitempty"`
 	// EditorTreeWidth is the width, in DIPs, of the folders beside the
 	// text in an editor window, 140 to 600; EditorTreeHidden hides them.
 	EditorTreeWidth  float32 `json:"editorTreeWidth,omitempty"`
@@ -691,7 +697,7 @@ const (
 
 // Default returns the defaults.
 func Default() Settings {
-	return Settings{Background: DefaultBackground(), Theme: theme.Auto, CloseBehavior: CloseToTray, TrayIcon: TrayIconColor, TrayClick: TrayClickPanel, TrayMaterial: MaterialTranslucent, TrayHeight: DefaultTrayHeight, CheckUpdates: true, UpdateIntervalHours: 1, TerminalFontSize: 13, TerminalLineHeight: 100, TerminalCharWidth: 100, TerminalCursorStyle: CursorBlock, TerminalCursorBlink: true, KeepAliveSeconds: 30, AutoReconnect: true, SidebarWidth: 240, ChromeMaterial: MaterialTranslucent, ContentMaterial: MaterialOpaque, MonospacedOnly: true, TransferConcurrency: 3, OpenConfirmMB: 10, FilesSplit: 50, FilesEdge: FilesRight, TerminalRightClick: RightClickMenu, EditorTreeWidth: 240, OSC52Write: OSC52Ask, OSC52MaxBytes: OSC52MaxDefault, OSC52Notify: true, MetricsEnabled: true, MetricsInterval: 2,
+	return Settings{Background: DefaultBackground(), Theme: theme.Auto, HideSystemTitleBar: true, CloseBehavior: CloseToTray, TrayIcon: TrayIconColor, TrayClick: TrayClickPanel, TrayMaterial: MaterialTranslucent, TrayHeight: DefaultTrayHeight, CheckUpdates: true, UpdateIntervalHours: 1, TerminalFontSize: 13, TerminalLineHeight: 100, TerminalCharWidth: 100, TerminalCursorStyle: CursorBlock, TerminalCursorBlink: true, KeepAliveSeconds: 30, AutoReconnect: true, SidebarWidth: 240, ChromeMaterial: MaterialTranslucent, ContentMaterial: MaterialOpaque, MonospacedOnly: true, TransferConcurrency: 3, OpenConfirmMB: 10, FilesSplit: 50, FilesEdge: FilesRight, TerminalRightClick: RightClickMenu, EditorTreeWidth: 240, OSC52Write: OSC52Ask, OSC52MaxBytes: OSC52MaxDefault, OSC52Notify: true, MetricsEnabled: true, MetricsInterval: 2,
 		AIDefaultAgent: "builtin", AIDefaultMode: "ask", AIReviewStrictness: AIReviewStandard, AIContextLines: 200, AIAuditRetentionDays: 90, AIRequestTimeout: DefaultAIRequestTimeout, AIRedact: true, MCPPort: MCPPortDefault, LocalKeys: true, Highlight: Highlight{On: true}, RenewalNotify: true}
 }
 

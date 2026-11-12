@@ -52,6 +52,12 @@ func (a *App) connLabel(cn *conn) string {
 	if isTool(cn.kind) {
 		return a.toolNames[cn.kind]
 	}
+	if cn.kind == layout.Files && isLocal(cn.host.ID) {
+		if a.localFilesName != "" {
+			return a.localFilesName
+		}
+		return locales.In("en").LocalFiles()
+	}
 	return a.pv(cn.host.Label())
 }
 

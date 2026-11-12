@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Licoy/sshyard/internal/app"
+	"github.com/Licoy/sshyard/internal/diagnostic"
 	"github.com/Licoy/sshyard/internal/gtkfix"
 	"github.com/Licoy/sshyard/internal/keychain"
 	"github.com/Licoy/sshyard/internal/macfix"
@@ -120,6 +121,12 @@ func appMenu() *mygo.Menu {
 }
 
 func main() {
+	if err := prepareNativeRendering(); err != nil {
+		// If exec is unavailable, the in-memory renderer also avoids
+		// relying on retained GTK GL framebuffers.
+		_ = os.Setenv("MYGO_GPU", "0")
+		log.Print("sshyard: using native software rendering after full redraw setup failed")
+	}
 	mygo.Use(updatePlugin())
 	if runtime.GOOS == "darwin" {
 		mygo.App.SetMenu(appMenu())
@@ -132,6 +139,14 @@ func main() {
 		// Startup failures are presented with safe, localized diagnostics in the UI.
 		var d *desktop
 		p := platform()
+		var trace *diagnostic.Log
+		if paths, err := storagePaths(); err == nil {
+			trace, _ = diagnostic.Open(filepath.Join(paths.DataDir, "diagnostics.log"))
+		}
+		if trace != nil {
+			p.Diagnostic = trace.Event
+			trace.Event("app.start", map[string]any{"version": mygo.App.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "full_redraw": os.Getenv("MYGO_PARTIAL") == "0", "gpu_disabled": os.Getenv("MYGO_GPU") == "0"})
+		}
 		p.SetTrayIcon = func(style string) error { return d.setTrayIcon(style) }
 		p.SetRememberLayout = changeRememberLayout
 		p.Notify = func(id, title, body string, clicked func()) error {
@@ -143,9 +158,38 @@ func main() {
 			return n.Show()
 		}
 		a, _ := app.New(p)
+		if trace != nil {
+			snapshot := func() map[string]any {
+				state := a.DiagnosticInputSnapshot()
+				for key, value := range gtkfix.InputState() {
+					state[key] = value
+				}
+				return state
+			}
+			installed := gtkfix.TraceInput(func(event string, fields map[string]any) {
+				if event == "native.pointer.done" {
+					fields["input"] = snapshot()
+				}
+				trace.Event(event, fields)
+			})
+			trace.Event("native.input_trace", map[string]any{"installed": installed})
+			trace.WatchUI(postUI, snapshot)
+		}
 		installWindowStates(a)
-		mygo.App.OnQuit(a.Close)
+		mygo.App.OnQuit(func() {
+			a.Close()
+			if trace != nil {
+				trace.Event("app.stop", nil)
+				trace.Close()
+			}
+		})
 		prepareWindowState("main")
+		hideSystemTitleBar := a.Settings().HideSystemTitleBar
+		titleBarStyle := mygo.TitleBarDefault
+		if hideSystemTitleBar {
+			titleBarStyle = mygo.TitleBarHiddenInset
+		}
+		customWindowButtons := hideSystemTitleBar && ownWindowButtons()
 		w := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "SSHYard",
 			Width:     1200,
@@ -153,14 +197,14 @@ func main() {
 			MinWidth:  820,
 			MinHeight: 520,
 			StateKey:  "main",
-			// One unified toolbar: the page draws the title area, the
-			// window controls sit over it, inset on macOS.
-			TitleBarStyle:        mygo.TitleBarHiddenInset,
+			// A hidden system title bar shares the app's toolbar; otherwise
+			// the system draws its title and window controls above it.
+			TitleBarStyle:        titleBarStyle,
 			TitleBarHeight:       40,
 			TrafficLightPosition: &mygo.Point{X: 14, Y: 13},
-			// Linux and Windows: the title bar draws the window's
-			// buttons, in the app's look (app.WindowControls).
-			HideWindowButtons: ownWindowButtons(),
+			// Hidden title bars use the app's window buttons on Linux and
+			// Windows. macOS keeps its native traffic lights.
+			HideWindowButtons: customWindowButtons,
 			// The sidebar's glass: the system's material on macOS, where
 			// the sidebar leaves its fill clear; a solid fill elsewhere.
 			Vibrancy:        windowVibrancy(),
@@ -171,13 +215,43 @@ func main() {
 		rememberWindow(w, "main")
 		// macOS: right clicks over the title bar reach the tabs (see macfix),
 		// once the window has made MyGo's view class.
-		macfix.TitleBarClicks()
+		if hideSystemTitleBar {
+			macfix.TitleBarClicks()
+		}
 		d = newDesktop(a, w)
 		a.Start()
 		go updater.CleanLeftovers()
-		w.OnMinimize(func() { a.SetMinimized(true) })
-		w.OnRestore(func() { a.SetMinimized(false) })
-		if ownWindowButtons() {
+		reportWindow := func(event string) {
+			if p.Diagnostic == nil {
+				return
+			}
+			b, content := w.Bounds(), w.ContentBounds()
+			p.Diagnostic(event, map[string]any{"bounds": b, "content": content, "maximized": w.IsMaximized(), "minimized": w.IsMinimized(), "focused": w.IsFocused()})
+		}
+		w.OnFocus(func() { reportWindow("window.focus") })
+		w.OnBlur(func() { reportWindow("window.blur") })
+		w.OnResize(func() {
+			reportWindow("window.resize")
+			w.Invalidate()
+		})
+		w.OnMinimize(func() {
+			reportWindow("window.minimize")
+			a.SetMinimized(true)
+		})
+		w.OnRestore(func() {
+			reportWindow("window.restore")
+			a.SetMinimized(false)
+		})
+		a.SetMaximized(w.IsMaximized())
+		w.OnMaximize(func() {
+			reportWindow("window.maximize")
+			a.SetMaximized(true)
+		})
+		w.OnUnmaximize(func() {
+			reportWindow("window.unmaximize")
+			a.SetMaximized(false)
+		})
+		if customWindowButtons {
 			// Off the frame that clicked them: closing the window there
 			// would take it down under the view.
 			a.SetWindow(app.WindowControls{
@@ -186,9 +260,6 @@ func main() {
 				Unmaximize: func() { go w.Unmaximize() },
 				Close:      func() { go w.Close() },
 			})
-			a.SetMaximized(w.IsMaximized())
-			w.OnMaximize(func() { a.SetMaximized(true) })
-			w.OnUnmaximize(func() { a.SetMaximized(false) })
 		}
 	})
 	if err := mygo.App.Run(); err != nil {

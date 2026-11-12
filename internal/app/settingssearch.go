@@ -62,6 +62,7 @@ var settingEntries = []settingEntry{
 	{prefGeneral, locales.Messages.UpdateInterval, locales.Messages.UpdateIntervalNote},
 	{prefGeneral, locales.Messages.FieldProxy, locales.Messages.ProxySystemNote},
 	{prefAppearance, locales.Messages.Theme, nil},
+	{prefAppearance, locales.Messages.HideSystemTitleBar, locales.Messages.HideSystemTitleBarNote},
 	{prefAppearance, locales.Messages.UiZoom, locales.Messages.UiZoomDesc},
 	{prefAppearance, locales.Messages.BackgroundSection, locales.Messages.BackgroundNote},
 	{prefAppearance, locales.Messages.BackgroundFit, nil},
